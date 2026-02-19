@@ -74,7 +74,11 @@ _rate_limits: dict[str, list[float]] = defaultdict(list)
 
 # Default: 60 requests per minute per key
 RATE_LIMIT_WINDOW = 60  # seconds
-RATE_LIMIT_MAX = int(os.getenv("ZENFA_RATE_LIMIT_MAX", "60"))
+
+
+def _get_rate_limit_max() -> int:
+    """Read rate limit max at call time (allows test patching)."""
+    return int(os.getenv("ZENFA_RATE_LIMIT_MAX", "60"))
 
 
 async def check_rate_limit(
@@ -87,16 +91,17 @@ async def check_rate_limit(
     """
     now = time.monotonic()
     window_start = now - RATE_LIMIT_WINDOW
+    rate_limit_max = _get_rate_limit_max()
 
     # Clean old entries
     _rate_limits[api_key] = [
         t for t in _rate_limits[api_key] if t > window_start
     ]
 
-    if len(_rate_limits[api_key]) >= RATE_LIMIT_MAX:
+    if len(_rate_limits[api_key]) >= rate_limit_max:
         raise HTTPException(
             status_code=429,
-            detail=f"Rate limit exceeded. Max {RATE_LIMIT_MAX} requests per minute.",
+            detail=f"Rate limit exceeded. Max {rate_limit_max} requests per minute.",
             headers={"Retry-After": str(RATE_LIMIT_WINDOW)},
         )
 
