@@ -1,1 +1,1 @@
-"""Knapsack optimization engine and hardware compatibility rules."""
+"""Knapsack optimizer + hardware compatibility engine."""
