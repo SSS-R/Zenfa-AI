@@ -18,8 +18,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from zenfa_ai.api.internal import router as internal_router
 from zenfa_ai.api.internal import set_llm_client as set_internal_llm
+from zenfa_ai.api.internal import set_cache as set_internal_cache
 from zenfa_ai.api.vendor import router as vendor_router
 from zenfa_ai.api.vendor import set_llm_client as set_vendor_llm
+from zenfa_ai.api.vendor import set_cache as set_vendor_cache
+from zenfa_ai.cache.redis_cache import BuildCache
 from zenfa_ai.evaluator.llm_client import create_llm_client
 
 logger = logging.getLogger(__name__)
@@ -42,9 +45,15 @@ async def lifespan(app: FastAPI):
         timeout=int(os.getenv("LLM_TIMEOUT", "15")),
     )
 
+    # Initialize Redis cache
+    cache = BuildCache()
+    cache_connected = await cache.connect()
+
     # Inject into both gateways
     set_internal_llm(llm_client)
     set_vendor_llm(llm_client)
+    set_internal_cache(cache if cache_connected else None)
+    set_vendor_cache(cache if cache_connected else None)
 
     if llm_client:
         logger.info(
@@ -55,9 +64,15 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("No LLM keys — running in knapsack-only mode")
 
+    if cache_connected:
+        logger.info("Redis cache connected")
+    else:
+        logger.warning("Redis unavailable — caching disabled")
+
     yield
 
-    # Cleanup (future: close Redis, etc.)
+    # Cleanup
+    await cache.disconnect()
     logger.info("Shutting down Zenfa AI Engine")
 
 
