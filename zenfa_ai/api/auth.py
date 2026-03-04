@@ -21,42 +21,71 @@ from fastapi.security import APIKeyHeader
 
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-# In production, these come from a database or secrets manager
-# For now, env var with comma-separated keys
-_VALID_KEYS: Optional[set[str]] = None
+from zenfa_ai.cache.redis_cache import BuildCache
+
+# Simulated DB call – In production this would query PostgreSQL.
+# For B2B keys, we will cache the result in Redis.
+async def _fetch_api_key_from_db(api_key: str) -> bool:
+    """Mock database check."""
+    raw = os.getenv("ZENFA_API_KEYS", "")
+    valid_keys = {k.strip() for k in raw.split(",") if k.strip()}
+    return api_key in valid_keys
 
 
-def _load_valid_keys() -> set[str]:
-    """Load valid API keys from environment."""
-    global _VALID_KEYS
-    if _VALID_KEYS is None:
-        raw = os.getenv("ZENFA_API_KEYS", "")
-        _VALID_KEYS = {k.strip() for k in raw.split(",") if k.strip()}
-    return _VALID_KEYS
+async def _is_valid_api_key(api_key: str, cache: Optional[BuildCache]) -> bool:
+    """Check if API key is valid using Redis cache as first layer."""
+    if not cache or not cache._available:
+        return await _fetch_api_key_from_db(api_key)
+
+    cache_key = f"auth:apikey:{api_key}"
+    
+    # 1. Check Cache
+    cached_status = await cache.get(cache_key)
+    if cached_status is not None:
+        return cached_status == "valid"
+
+    # 2. Cache Miss -> Check DB
+    is_valid = await _fetch_api_key_from_db(api_key)
+    
+    # 3. Store in cache (cache for 5 minutes)
+    await cache.set(cache_key, "valid" if is_valid else "invalid", ttl=300)
+    
+    return is_valid
 
 
 async def require_api_key(
+    request: Request,
     api_key: Optional[str] = Security(API_KEY_HEADER),
 ) -> str:
-    """FastAPI dependency — validates X-API-Key header.
+    """FastAPI dependency — validates X-API-Key header against Redis/DB.
 
     Raises 401 if missing, 403 if invalid.
     """
+    
+    origin = request.headers.get("origin")
+    if origin:
+        # Simple domain verification rule (in reality this would be stored alongside the API Key in the DB)
+        allowed_origins = os.getenv("CORS_ORIGINS", "").split(",")
+        allowed_origins = [o.strip() for o in allowed_origins if o.strip()]
+        
+        if origin not in allowed_origins and allowed_origins:
+           raise HTTPException(
+               status_code=403,
+               detail="Invalid Origin for API Key",
+           )
+           
     if not api_key:
         raise HTTPException(
             status_code=401,
             detail="Missing X-API-Key header",
         )
 
-    valid_keys = _load_valid_keys()
-    if not valid_keys:
-        # No keys configured — reject all vendor requests
-        raise HTTPException(
-            status_code=503,
-            detail="Vendor API not configured. Contact admin.",
-        )
+    # In app.py, the cache is attached to app state during lifespan
+    cache: Optional[BuildCache] = getattr(request.app.state, "cache", None)
 
-    if api_key not in valid_keys:
+    is_valid = await _is_valid_api_key(api_key, cache)
+
+    if not is_valid:
         raise HTTPException(
             status_code=403,
             detail="Invalid API key",
@@ -69,7 +98,7 @@ async def require_api_key(
 # Rate Limiting (in-memory, per API key)
 # ──────────────────────────────────────────────
 
-# Simple sliding window counter
+# Simple sliding window counter for fallback memory cache
 _rate_limits: dict[str, list[float]] = defaultdict(list)
 
 # Default: 60 requests per minute per key
@@ -81,17 +110,68 @@ def _get_rate_limit_max() -> int:
     return int(os.getenv("ZENFA_RATE_LIMIT_MAX", "60"))
 
 
+async def _redis_sliding_window(cache: BuildCache, api_key: str, now: float, window: int, limit: int) -> bool:
+    """Execute Redis sliding window rate limit using an atomic pipeline.
+    
+    Returns True if allowed, False if limit exceeded.
+    """
+    key = f"ratelimit:{api_key}"
+    window_start = now - window
+    
+    # Use the raw redis client for advanced commands
+    redis_client = cache._redis
+    
+    async with redis_client.pipeline(transaction=True) as pipe:
+        # ZREMRANGEBYSCORE key -inf (now - window)
+        pipe.zremrangebyscore(key, "-inf", window_start) # Remove old requests
+        # ZADD key score member
+        pipe.zadd(key, {str(now): now})                  # Add current request 
+        # ZCARD key
+        pipe.zcard(key)                                  # Count requests in window
+        # EXPIRE key window
+        pipe.expire(key, window)                         # Set TTL to clean up idle keys
+        
+        results = await pipe.execute()
+    
+    count_in_window = results[2]
+    return count_in_window <= limit
+
+
 async def check_rate_limit(
     request: Request,
     api_key: str = Depends(require_api_key),
 ) -> str:
     """FastAPI dependency — rate limits by API key.
 
-    Uses a simple sliding window counter. In production, use Redis.
+    Uses a robust Redis sliding window counter. Falls back to memory if cache not available.
     """
     now = time.monotonic()
-    window_start = now - RATE_LIMIT_WINDOW
     rate_limit_max = _get_rate_limit_max()
+    
+    # 1. Fetch the cache from the app state
+    cache: Optional[BuildCache] = getattr(request.app.state, "cache", None)
+
+    # 2. Redis Rate Limiting
+    if cache and cache._available:
+        # Convert monotonic to unix epoch for redis absolute scoring
+        unix_now = time.time()
+        is_allowed = await _redis_sliding_window(
+            cache=cache, 
+            api_key=api_key, 
+            now=unix_now, 
+            window=RATE_LIMIT_WINDOW, 
+            limit=rate_limit_max
+        )
+        if not is_allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. Max {rate_limit_max} requests per minute.",
+                headers={"Retry-After": str(RATE_LIMIT_WINDOW)},
+            )
+        return api_key
+
+    # 3. Fallback: Memory Rate Limiting
+    window_start = now - RATE_LIMIT_WINDOW
 
     # Clean old entries
     _rate_limits[api_key] = [
@@ -116,5 +196,6 @@ def reset_rate_limits() -> None:
 
 def reset_api_keys() -> None:
     """Reset cached API keys (for testing)."""
-    global _VALID_KEYS
-    _VALID_KEYS = None
+    # For testing, we just clear the environment variable cache
+    if "ZENFA_API_KEYS" in os.environ:
+        os.environ["ZENFA_API_KEYS"] = ""

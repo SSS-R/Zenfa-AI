@@ -93,7 +93,7 @@ class EvaluationResponse(BaseModel):
     )
     red_flags: List[str] = Field(
         default_factory=list,
-        description="Known issues with any component (thermal, driver, DOA rate)",
+        description="Community-sourced known issues with any component (thermal, driver, DOA rate)",
     )
     approved: bool = Field(
         description="True if score >= 8.5 and no critical red flags",

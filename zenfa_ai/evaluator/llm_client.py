@@ -188,10 +188,12 @@ class GeminiClient(BaseLLMClient):
         if self._client is None:
             try:
                 import google.generativeai as genai
+                from google.generativeai.types import Tool
 
                 genai.configure(api_key=self.api_key)
                 self._client = genai.GenerativeModel(
                     model_name=self.model,
+                    tools=[{"google_search": {}}],  # Enable Google Search Grounding natively via the tools arg
                     generation_config={
                         "response_mime_type": "application/json",
                         "temperature": 0.3,

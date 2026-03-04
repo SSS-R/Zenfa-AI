@@ -138,7 +138,14 @@ class ComponentWithPrice(BaseModel):
 StorageTier = Literal[256, 512, 1000, 2000]
 
 # Allowed brand preferences
-BrandPreference = Literal["AMD", "Intel", "NVIDIA"]
+CPUBrandPreference = Literal["AMD", "Intel"]
+GPUBrandPreference = Literal["NVIDIA", "AMD", "Intel"]
+
+class RGBPriority(str, Enum):
+    """Tiered RGB preference."""
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
 
 
 class BuildPreferences(BaseModel):
@@ -148,11 +155,19 @@ class BuildPreferences(BaseModel):
     This prevents LLM hallucination on user intent.
     """
 
-    prefer_brand: Optional[BrandPreference] = None
-    prefer_rgb: bool = False
+    prefer_cpu_brand: Optional[CPUBrandPreference] = None
+    prefer_gpu_brand: Optional[GPUBrandPreference] = None
+    
+    include_monitor: bool = False
+    monitor_budget_pct: Optional[float] = Field(None, ge=0.0, le=100.0)
+    
+    form_factor: Optional[FormFactor] = None
+    rgb_priority: RGBPriority = RGBPriority.MEDIUM
+
     min_storage_gb: StorageTier = 256
     prefer_wifi: bool = False
 
     # ── Future selectable options go here ──
     # prefer_architecture: Optional[Literal["AMD", "Intel"]] = None
     # prefer_gpu_series: Optional[Literal["RTX 40", "RTX 50", "RX 7000"]] = None
+

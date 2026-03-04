@@ -153,13 +153,21 @@ def _filter_by_preferences(
 
     filtered = components
 
-    # Brand preference
-    if preferences.prefer_brand is not None:
-        brand_matches = [
-            c for c in filtered if c.brand == preferences.prefer_brand
+    # CPU Brand preference
+    if component_type == "cpu" and preferences.prefer_cpu_brand:
+        cpu_brand_matches = [
+            c for c in filtered if c.brand == preferences.prefer_cpu_brand
         ]
-        if brand_matches:
-            filtered = brand_matches
+        if cpu_brand_matches:
+            filtered = cpu_brand_matches
+            
+    # GPU Brand preference
+    if component_type == "gpu" and preferences.prefer_gpu_brand:
+        gpu_brand_matches = [
+            c for c in filtered if c.brand == preferences.prefer_gpu_brand
+        ]
+        if gpu_brand_matches:
+            filtered = gpu_brand_matches
 
     # Storage minimum
     if component_type == "storage" and preferences.min_storage_gb:
@@ -170,11 +178,22 @@ def _filter_by_preferences(
         if storage_matches:
             filtered = storage_matches
 
-    # RGB preference
-    if preferences.prefer_rgb and component_type in ("ram", "case_fan"):
+    # RGB priority (only boosting if High, or filtering if Low - but keeping it simple as a soft filter for High)
+    if preferences.rgb_priority == "high" and component_type in ("ram", "case_fan", "cooler", "case"):
         rgb_matches = [c for c in filtered if c.specs.get("rgb", False)]
         if rgb_matches:
             filtered = rgb_matches
+            
+    # Form factor preference for Motherboard and Case
+    if preferences.form_factor:
+        if component_type == "motherboard":
+            ff_matches = [c for c in filtered if c.specs.get("form_factor") == preferences.form_factor]
+            if ff_matches:
+                filtered = ff_matches
+        elif component_type == "case":
+            ff_matches = [c for c in filtered if preferences.form_factor in c.specs.get("form_factor_support", [])]
+            if ff_matches:
+                filtered = ff_matches
 
     return filtered
 

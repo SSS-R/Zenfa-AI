@@ -243,7 +243,7 @@ class TestLLMSuggestions:
 class TestPreferences:
     def test_brand_preference_applied(self):
         """Brand preference should influence component selection."""
-        prefs = BuildPreferences(prefer_brand="AMD")
+        prefs = BuildPreferences(prefer_cpu_brand="AMD")
         request = _make_request(budget_max=150000, preferences=prefs)
         build, _ = generate_build(request)
 

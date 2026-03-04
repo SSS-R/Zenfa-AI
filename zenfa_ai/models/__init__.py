@@ -11,8 +11,9 @@ from zenfa_ai.models.build import (
     SelectedComponent,
 )
 from zenfa_ai.models.components import (
-    BrandPreference,
     BuildPreferences,
+    CPUBrandPreference,
+    GPUBrandPreference,
     ComponentType,
     ComponentWithPrice,
     CoolerType,
@@ -28,7 +29,8 @@ from zenfa_ai.models.components import (
 
 __all__ = [
     # Components & enums
-    "BrandPreference",
+    "CPUBrandPreference",
+    "GPUBrandPreference",
     "BuildPreferences",
     "ComponentType",
     "ComponentWithPrice",

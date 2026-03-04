@@ -109,6 +109,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    from zenfa_ai.api.middleware import TelemetryMiddleware
+    app.add_middleware(TelemetryMiddleware)
+
     # Mount gateways
     app.include_router(internal_router)
     app.include_router(vendor_router)
